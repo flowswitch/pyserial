@@ -490,7 +490,8 @@ class Serial(SerialBase):
                 self._update_dtr_state()
             if not self._rtscts:
                 self._update_rts_state()
-            self.reset_input_buffer()
+            if self._flush_on_open:
+                self.reset_input_buffer()
             self.reset_output_buffer()
         except:
             self.close()

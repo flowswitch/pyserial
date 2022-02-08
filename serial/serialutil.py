@@ -190,6 +190,7 @@ class SerialBase(io.RawIOBase):
                  dsrdtr=False,
                  inter_byte_timeout=None,
                  exclusive=None,
+                 flush_on_open=True,
                  **kwargs):
         """\
         Initialize comm port object. If a "port" is given, then the port will be
@@ -217,6 +218,7 @@ class SerialBase(io.RawIOBase):
         self._dtr_state = True
         self._break_state = False
         self._exclusive = None
+        self._flush_on_open = flush_on_open
 
         # assign values using get/set methods using the properties feature
         self.port = port

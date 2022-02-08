@@ -84,7 +84,7 @@ class Serial(SerialBase):
             win32.PurgeComm(
                 self._port_handle,
                 win32.PURGE_TXCLEAR | win32.PURGE_TXABORT |
-                win32.PURGE_RXCLEAR | win32.PURGE_RXABORT)
+                ((win32.PURGE_RXCLEAR | win32.PURGE_RXABORT) if self._flush_on_open else 0))
         except:
             try:
                 self._close()

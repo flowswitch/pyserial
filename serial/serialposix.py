@@ -37,6 +37,7 @@ import select
 import struct
 import sys
 import termios
+import gc
 
 import serial
 from serial.serialutil import SerialBase, SerialException, to_bytes, \
@@ -307,6 +308,14 @@ TIOCM_DTR_str = struct.pack('I', TIOCM_DTR)
 TIOCSBRK = getattr(termios, 'TIOCSBRK', 0x5427)
 TIOCCBRK = getattr(termios, 'TIOCCBRK', 0x5428)
 
+# prepare termios echo disable lflag mask
+TIO_LFLAG_MASK = ~(termios.ICANON | termios.ECHO | termios.ECHOE |
+    termios.ECHOK | termios.ECHONL |
+    termios.ISIG | termios.IEXTEN)  # |termios.ECHOPRT
+for flag in ('ECHOCTL', 'ECHOKE'):  # netbsd workaround for Erk
+    if hasattr(termios, flag):
+        TIO_LFLAG_MASK &= ~getattr(termios, flag)
+
 
 class Serial(SerialBase, PlatformSpecific):
     """\
@@ -324,9 +333,22 @@ class Serial(SerialBase, PlatformSpecific):
         if self.is_open:
             raise SerialException("Port is already open.")
         self.fd = None
-        # open
+        # open and disable termios echo ASAP
+        # minimize delay between open and tcsetattr by fetching all attrs in advance
         try:
-            self.fd = os.open(self.portstr, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            fnget = termios.tcgetattr
+            fnset = termios.tcsetattr
+            TCSANOW = termios.TCSANOW
+            mask = TIO_LFLAG_MASK
+            gc_enabled = gc.isenabled()
+            gc.disable()
+            fd = os.open(self.portstr, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+            tcattr = fnget(fd)
+            tcattr[3] &= mask
+            fnset(fd, TCSANOW, tcattr)
+            if gc_enabled:
+                gc.enable()
+            self.fd = fd
         except OSError as msg:
             self.fd = None
             raise SerialException(msg.errno, "could not open port {}: {}".format(self._port, msg))
@@ -348,7 +370,8 @@ class Serial(SerialBase, PlatformSpecific):
                 if e.errno not in (errno.EINVAL, errno.ENOTTY):
                     raise
 
-            self._reset_input_buffer()
+            if self._flush_on_open:
+                self._reset_input_buffer()
 
             self.pipe_abort_read_r, self.pipe_abort_read_w = os.pipe()
             self.pipe_abort_write_r, self.pipe_abort_write_w = os.pipe()
@@ -408,12 +431,7 @@ class Serial(SerialBase, PlatformSpecific):
             raise SerialException("Could not configure port: {}".format(msg))
         # set up raw mode / no echo / binary
         cflag |= (termios.CLOCAL | termios.CREAD)
-        lflag &= ~(termios.ICANON | termios.ECHO | termios.ECHOE |
-                   termios.ECHOK | termios.ECHONL |
-                   termios.ISIG | termios.IEXTEN)  # |termios.ECHOPRT
-        for flag in ('ECHOCTL', 'ECHOKE'):  # netbsd workaround for Erk
-            if hasattr(termios, flag):
-                lflag &= ~getattr(termios, flag)
+        lflag &= TIO_LFLAG_MASK
 
         oflag &= ~(termios.OPOST | termios.ONLCR | termios.OCRNL)
         iflag &= ~(termios.INLCR | termios.IGNCR | termios.ICRNL | termios.IGNBRK)
